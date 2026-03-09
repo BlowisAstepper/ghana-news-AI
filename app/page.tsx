@@ -1,65 +1,126 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState } from 'react';
+import ArticleList from '../components/ArticleList';
+import SearchBar from '../components/SearchBar';
 
 export default function Home() {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchSource, setSearchSource] = useState<string | undefined>();
+  const [isSearching, setIsSearching] = useState(false);
+
+  const handleSearch = (query: string, source?: string) => {
+    setSearchQuery(query);
+    setSearchSource(source);
+    setIsSearching(true);
+    // The search will be handled by the ArticleList component
+    setTimeout(() => setIsSearching(false), 500); // Reset loading state
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Header */}
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-red-600 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                    Ghana News Hub
+                  </h1>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Latest news from Ghana&apos;s leading sources
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                Powered by RSS feeds
+              </div>
+              <button
+                onClick={() => window.location.reload()}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Search Section */}
+        <div className="mb-8">
+          <SearchBar onSearch={handleSearch} loading={isSearching} />
+        </div>
+
+        {/* News Sources Info */}
+        <div className="mb-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+          <div className="flex items-start space-x-3">
+            <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div>
+              <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                News Sources
+              </h3>
+              <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                Articles are automatically fetched from MyJoyOnline news source.
+                Content is updated frequently to keep you informed with the latest Ghana news.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Articles Section */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              {searchQuery ? `Search Results for "${searchQuery}"` : 'Latest News'}
+            </h2>
+            {searchQuery && (
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                Filtered by: {searchSource || 'All sources'}
+              </span>
+            )}
+          </div>
+
+          <ArticleList />
         </div>
       </main>
+
+      {/* Footer */}
+      <footer className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-16">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col md:flex-row items-center justify-between">
+            <div className="text-sm text-gray-600 dark:text-gray-400">
+              © 2026 Ghana News Hub. All rights reserved.
+            </div>
+            <div className="flex items-center space-x-6 mt-4 md:mt-0">
+              <a
+                href="https://www.myjoyonline.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors duration-200"
+              >
+                MyJoyOnline
+              </a>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
