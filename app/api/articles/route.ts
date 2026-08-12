@@ -1,26 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { refreshIfStale } from '@/lib/rss-service'
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '20')
+    const limit = parseInt(searchParams.get('limit') || '12')
     const source = searchParams.get('source')
 
     const skip = (page - 1) * limit
-
     const where = source ? { source } : {}
 
     const [articles, total] = await Promise.all([
       prisma.article.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { publishedAt: 'desc' },
         skip,
         take: limit,
       }),
       prisma.article.count({ where }),
     ])
+
+    // Fires after the response is already on its way to the browser, so a
+    // stale/empty DB never makes a visitor wait on a live RSS fetch — this
+    // request still serves whatever's on hand, and the *next* one benefits.
+    after(() => refreshIfStale().catch((err) => console.error('Background refresh failed:', err)))
 
     return NextResponse.json({
       articles,
@@ -40,45 +45,6 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const { title, link, content, source } = body
-
-    if (!title || !link || !content || !source) {
-      return NextResponse.json(
-        { error: 'Missing required fields: title, link, content, source' },
-        { status: 400 }
-      )
-    }
-
-    // Check if article already exists
-    const existingArticle = await prisma.article.findUnique({
-      where: { link },
-    })
-
-    if (existingArticle) {
-      return NextResponse.json(
-        { error: 'Article with this link already exists' },
-        { status: 409 }
-      )
-    }
-
-    const article = await prisma.article.create({
-      data: {
-        title,
-        link,
-        content,
-        source,
-      },
-    })
-
-    return NextResponse.json(article, { status: 201 })
-  } catch (error) {
-    console.error('Error creating article:', error)
-    return NextResponse.json(
-      { error: 'Failed to create article' },
-      { status: 500 }
-    )
-  }
-}
+// Note: there's deliberately no POST here. Articles only ever come in
+// through the RSS ingestion pipeline (see /api/rss-fetch); a public write
+// endpoint would just be an unauthenticated way to inject arbitrary content.

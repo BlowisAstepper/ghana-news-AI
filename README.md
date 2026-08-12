@@ -1,37 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ghana News Hub
 
-## Getting Started
+A news aggregator that pulls MyJoyOnline's RSS feed, cleans and dedupes the
+articles, and serves them through a searchable Next.js frontend.
 
-First, run the development server:
+## How it works
+
+- **Ingestion** (`lib/rss-parser.ts`, `lib/rss-service.ts`): parses the RSS
+  feed, falls back to fetching and extracting the full article with
+  `@mozilla/readability` when the feed entry is too thin, strips markup with
+  `cheerio`, and `upsert`s into Postgres keyed on the article link (so
+  re-fetching never creates duplicates, even under concurrent runs).
+- **Retention**: articles older than 24 hours are pruned on every fetch, so
+  the feed stays current instead of growing forever.
+- **Scheduling**: there's no in-process cron. Serverless functions (Vercel,
+  in this case) don't have a long-running process to host one, so a `GET/POST
+  /api/rss-fetch` route does the fetch, and something external calls it on a
+  timer — see [`.github/workflows/rss-fetch.yml`](.github/workflows/rss-fetch.yml).
+  That route requires `Authorization: Bearer $CRON_SECRET`; without a
+  `CRON_SECRET` set it refuses every request, including its own trigger.
+- **API**: `GET /api/articles` (paginated, optional `source` filter) and
+  `GET /api/articles/search` (`q` + optional `source`) back the frontend.
+  There is deliberately no public write endpoint — articles only enter
+  through the ingestion pipeline.
+
+## Stack
+
+Next.js (App Router) · TypeScript · Tailwind CSS · Prisma · Postgres
+
+## Local setup
 
 ```bash
+npm install
+cp .env.example .env   # fill in DATABASE_URL and CRON_SECRET
+npx prisma migrate dev --name init
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+A free [Neon](https://neon.tech) Postgres database works fine for
+`DATABASE_URL`, both locally and in production. Generate `CRON_SECRET` with
+`openssl rand -base64 32`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+To trigger a fetch manually instead of waiting on the schedule:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+curl -X POST http://localhost:3000/api/rss-fetch \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
 
-## Learn More
+## Deploying (free)
 
-To learn more about Next.js, take a look at the following resources:
+1. **Database** — create a free Postgres instance on
+   [Neon](https://neon.tech), copy its connection string.
+2. **Vercel** — import the repo, set `DATABASE_URL` and `CRON_SECRET` as
+   project environment variables, deploy. Add `NEXT_PUBLIC_SITE_URL` once you
+   know the deployed domain (used for Open Graph tags).
+3. **Migrate** — run `npx prisma migrate deploy` against the Neon URL (once,
+   from your machine or a one-off CI step) to create the `Article` table.
+4. **Scheduler** — in the GitHub repo, add two Actions secrets/vars:
+   `CRON_SECRET` (same value as on Vercel) and a repo variable `APP_URL` set
+   to the deployed URL (no trailing slash). The
+   [`rss-fetch` workflow](.github/workflows/rss-fetch.yml) then pings
+   `/api/rss-fetch` every 15 minutes. GitHub disables schedules on repos with
+   no commits for 60 days — a small nudge (any commit) reactivates it.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project layout
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# ghana-news-AI
+```
+app/
+  api/articles/          GET list + search
+  api/rss-fetch/          fetch-and-store, auth-gated, meant for the scheduler
+  page.tsx                 the frontend
+components/               ArticleCard, ArticleList, SearchBar
+lib/                      rss-parser, rss-service, prisma client
+prisma/schema.prisma      Article model
+```

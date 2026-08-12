@@ -3,18 +3,19 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model Article {
-  id        String   @id @default(cuid())
-  title     String
-  link      String   @unique
-  content   String
-  source    String
+  id          String    @id @default(cuid())
+  title       String
+  link        String    @unique
+  content     String
+  source      String
   publishedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
-  @@index(source)
+  @@index([source])
+  @@index([publishedAt])
 }

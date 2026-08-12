@@ -1,0 +1,26 @@
+name: Refresh RSS feed
+
+# Serverless functions have no long-running process to host node-cron, so
+# this workflow is the scheduler: it just pings the deployed API route on
+# a timer. GitHub disables schedules on repos with no commits for 60 days,
+# so this will need a nudge (any commit) if the repo goes fully dormant.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {} # lets you trigger a fetch manually from the Actions tab
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/rss-fetch
+        run: |
+          status=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST "${{ vars.APP_URL }}/api/rss-fetch" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          cat /tmp/response.json
+          if [ "$status" -ge 300 ]; then
+            echo "Request failed with status $status"
+            exit 1
+          fi

@@ -1,71 +1,63 @@
-'use client';
+'use client'
 
-import React, { useState, useEffect } from 'react';
-import ArticleCard from './ArticleCard';
-
-interface Article {
-  id: string;
-  title: string;
-  link: string;
-  content: string;
-  source: string;
-  createdAt: string;
-}
-
-interface PaginationInfo {
-  page: number;
-  limit: number;
-  total: number;
-  pages: number;
-}
+import { useState, useEffect, useCallback } from 'react'
+import ArticleCard from './ArticleCard'
+import { Article, PaginationInfo } from '@/types/article'
 
 interface ArticleListProps {
-  initialArticles?: Article[];
-  initialPagination?: PaginationInfo;
+  searchQuery?: string
+  searchSource?: string
 }
 
-export default function ArticleList({ initialArticles = [], initialPagination }: ArticleListProps) {
-  const [articles, setArticles] = useState<Article[]>(initialArticles);
-  const [pagination, setPagination] = useState<PaginationInfo | null>(initialPagination || null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default function ArticleList({ searchQuery = '', searchSource = '' }: ArticleListProps) {
+  const [articles, setArticles] = useState<Article[]>([])
+  const [pagination, setPagination] = useState<PaginationInfo | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const fetchArticles = async (page: number = 1, limit: number = 12) => {
-    setLoading(true);
-    setError(null);
+  const fetchArticles = useCallback(async (page = 1) => {
+    setLoading(true)
+    setError(null)
 
     try {
-      const response = await fetch(`/api/articles?page=${page}&limit=${limit}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch articles');
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: '12',
+      })
+
+      let endpoint: string
+      if (searchQuery.trim()) {
+        params.set('q', searchQuery.trim())
+        if (searchSource) params.set('source', searchSource)
+        endpoint = `/api/articles/search?${params}`
+      } else {
+        if (searchSource) params.set('source', searchSource)
+        endpoint = `/api/articles?${params}`
       }
 
-      const data = await response.json();
-      setArticles(data.articles);
-      setPagination(data.pagination);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
-    }
-  };
+      const response = await fetch(endpoint)
+      if (!response.ok) throw new Error('Failed to fetch articles')
 
-  const handlePageChange = (newPage: number) => {
-    fetchArticles(newPage);
-  };
+      const data = await response.json()
+      setArticles(data.articles)
+      setPagination(data.pagination)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
+    } finally {
+      setLoading(false)
+    }
+  }, [searchQuery, searchSource])
 
   useEffect(() => {
-    if (initialArticles.length === 0) {
-      fetchArticles();
-    }
-  }, [initialArticles.length]);
+    fetchArticles(1)
+  }, [fetchArticles])
 
   if (loading && articles.length === 0) {
     return (
       <div className="flex justify-center items-center py-12">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
-    );
+    )
   }
 
   if (error && articles.length === 0) {
@@ -85,7 +77,7 @@ export default function ArticleList({ initialArticles = [], initialPagination }:
           Try again
         </button>
       </div>
-    );
+    )
   }
 
   return (
@@ -97,11 +89,21 @@ export default function ArticleList({ initialArticles = [], initialPagination }:
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
             </svg>
           </div>
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No articles found</h3>
-          <p className="text-gray-600 dark:text-gray-400">Check back later for new articles.</p>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            {searchQuery ? `No results for "${searchQuery}"` : 'No articles found'}
+          </h3>
+          <p className="text-gray-600 dark:text-gray-400">
+            {searchQuery ? 'Try a different search term.' : 'Check back later for new articles.'}
+          </p>
         </div>
       ) : (
         <>
+          {loading && (
+            <div className="flex justify-center py-2">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            </div>
+          )}
+
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {articles.map((article) => (
               <ArticleCard key={article.id} article={article} />
@@ -111,7 +113,7 @@ export default function ArticleList({ initialArticles = [], initialPagination }:
           {pagination && pagination.pages > 1 && (
             <div className="flex justify-center items-center space-x-2 mt-8">
               <button
-                onClick={() => handlePageChange(pagination.page - 1)}
+                onClick={() => fetchArticles(pagination.page - 1)}
                 disabled={pagination.page <= 1 || loading}
                 className="px-3 py-2 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors duration-200"
               >
@@ -125,7 +127,7 @@ export default function ArticleList({ initialArticles = [], initialPagination }:
               </span>
 
               <button
-                onClick={() => handlePageChange(pagination.page + 1)}
+                onClick={() => fetchArticles(pagination.page + 1)}
                 disabled={pagination.page >= pagination.pages || loading}
                 className="px-3 py-2 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors duration-200"
               >
@@ -138,5 +140,5 @@ export default function ArticleList({ initialArticles = [], initialPagination }:
         </>
       )}
     </div>
-  );
+  )
 }

@@ -79,3 +79,38 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
   console.log(`RSS fetch completed: ${success} new articles, ${failed} failed, ${deleted} deleted`)
   return { success, failed, deleted }
 }
+
+// How long a fetch is considered "fresh enough" before a page load will
+// trigger another one. Matches the external cron cadence (see
+// .github/workflows/rss-fetch.yml) — this is a fallback for visits that
+// land between scheduled runs, or for when the cron isn't wired up yet.
+const STALE_MS = 15 * 60 * 1000
+
+// Guards against a burst of concurrent requests (e.g. the homepage firing
+// off /api/articles while a search is also in flight) each kicking off
+// their own fetch. Only meaningful within a single warm server instance —
+// on serverless that's fine, since fetchAndStoreArticles() upserts by link
+// anyway, so an overlapping run from another instance is harmless.
+let refreshInFlight: Promise<FetchResult> | null = null
+
+export async function refreshIfStale(): Promise<void> {
+  if (refreshInFlight) {
+    await refreshInFlight
+    return
+  }
+
+  const latest = await prisma.article.findFirst({
+    orderBy: { publishedAt: 'desc' },
+    select: { publishedAt: true },
+  })
+
+  const isStale =
+    !latest?.publishedAt || Date.now() - latest.publishedAt.getTime() > STALE_MS
+
+  if (!isStale) return
+
+  refreshInFlight = fetchAndStoreArticles().finally(() => {
+    refreshInFlight = null
+  })
+  await refreshInFlight
+}
