@@ -4,6 +4,11 @@ import { prisma } from '@/lib/prisma'
 import { refreshIfStale } from '@/lib/rss-service'
 import { truncateForApi } from '@/lib/format'
 
+// The after() background refresh below can trigger a full RSS fetch (two
+// feeds + a Neon cold-start + a Gemini dedup call), which needs more room
+// than Vercel's default timeout gives a function.
+export const maxDuration = 60
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)

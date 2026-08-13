@@ -4,6 +4,10 @@ import { Prisma } from '@prisma/client'
 import { refreshIfStale } from '@/lib/rss-service'
 import { truncateForApi } from '@/lib/format'
 
+// Same reasoning as app/api/articles/route.ts — the after() background
+// refresh can run a full RSS fetch and needs more than the default timeout.
+export const maxDuration = 60
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
