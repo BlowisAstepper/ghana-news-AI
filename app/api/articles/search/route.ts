@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
 import { refreshIfStale } from '@/lib/rss-service'
+import { truncateForApi } from '@/lib/format'
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,7 +14,9 @@ export async function GET(request: NextRequest) {
 
     const skip = (page - 1) * limit
 
-    const where: Prisma.ArticleWhereInput = {}
+    // mergedIntoId: null excludes articles folded into another source's
+    // coverage of the same story — see lib/dedupe.ts.
+    const where: Prisma.ArticleWhereInput = { mergedIntoId: null }
 
     if (query.trim()) {
       // Postgres's `contains` is case-sensitive unless told otherwise
@@ -28,15 +31,23 @@ export async function GET(request: NextRequest) {
       where.source = source
     }
 
-    const [articles, total] = await Promise.all([
+    const [rawArticles, total] = await Promise.all([
       prisma.article.findMany({
         where,
         orderBy: { publishedAt: 'desc' },
         skip,
         take: limit,
+        include: {
+          duplicates: { select: { source: true, link: true, title: true } },
+        },
       }),
       prisma.article.count({ where }),
     ])
+
+    const articles = rawArticles.map((article) => ({
+      ...article,
+      content: truncateForApi(article.content),
+    }))
 
     after(() => refreshIfStale().catch((err) => console.error('Background refresh failed:', err)))
 

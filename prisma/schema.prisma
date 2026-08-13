@@ -15,7 +15,24 @@ model Article {
   source      String
   publishedAt DateTime?
   createdAt   DateTime  @default(now())
+  // Cached AI-generated plain-language summary. Nullable and generated
+  // lazily on first request (see /api/summarize) — never populated at
+  // ingestion time, so a slow RSS fetch never has to wait on the AI call.
+  summary     String?
+
+  // When ingestion (see lib/dedupe.ts) decides this article covers the same
+  // story as an existing one from a different source, it's still stored
+  // here (so we don't re-run the match check on it every 15 minutes) but
+  // points at the canonical article via mergedIntoId instead of standing
+  // alone. Listing queries filter to mergedIntoId: null so only canonical
+  // stories show up; the canonical article's `duplicates` relation is used
+  // to show "also reported by" links. onDelete: Cascade means a duplicate
+  // never outlives the canonical story it was folded into.
+  mergedIntoId String?
+  mergedInto   Article?  @relation("ArticleDuplicates", fields: [mergedIntoId], references: [id], onDelete: Cascade)
+  duplicates   Article[] @relation("ArticleDuplicates")
 
   @@index([source])
   @@index([publishedAt])
+  @@index([mergedIntoId])
 }

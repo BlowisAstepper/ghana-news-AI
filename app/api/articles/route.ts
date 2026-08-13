@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse, after } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { refreshIfStale } from '@/lib/rss-service'
+import { truncateForApi } from '@/lib/format'
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,17 +12,31 @@ export async function GET(request: NextRequest) {
     const source = searchParams.get('source')
 
     const skip = (page - 1) * limit
-    const where = source ? { source } : {}
+    // mergedIntoId: null excludes articles that got folded into another
+    // source's coverage of the same story — only canonical entries show up
+    // in listings; see lib/dedupe.ts.
+    const where: Prisma.ArticleWhereInput = {
+      mergedIntoId: null,
+      ...(source ? { source } : {}),
+    }
 
-    const [articles, total] = await Promise.all([
+    const [rawArticles, total] = await Promise.all([
       prisma.article.findMany({
         where,
         orderBy: { publishedAt: 'desc' },
         skip,
         take: limit,
+        include: {
+          duplicates: { select: { source: true, link: true, title: true } },
+        },
       }),
       prisma.article.count({ where }),
     ])
+
+    const articles = rawArticles.map((article) => ({
+      ...article,
+      content: truncateForApi(article.content),
+    }))
 
     // Fires after the response is already on its way to the browser, so a
     // stale/empty DB never makes a visitor wait on a live RSS fetch — this

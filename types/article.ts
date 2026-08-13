@@ -1,3 +1,9 @@
+export interface DuplicateSource {
+  source: string
+  link: string
+  title: string
+}
+
 export interface Article {
   id: string
   title: string
@@ -6,6 +12,8 @@ export interface Article {
   source: string
   publishedAt: string | null
   createdAt: string
+  summary?: string | null
+  duplicates?: DuplicateSource[]
 }
 
 export interface PaginationInfo {
