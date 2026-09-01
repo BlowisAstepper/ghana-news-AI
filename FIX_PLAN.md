@@ -23,6 +23,10 @@ Full-page extraction happens only when one reader requests one thin summary.
 - Validated and capped pagination, search, and source parameters.
 - Removed traffic-triggered RSS ingestion; the authenticated scheduler is the
   only refresh mechanism.
+- Replaced drift-prone GitHub/Vercel shared scheduler configuration with a
+  short-lived GitHub OIDC identity restricted to this repository, workflow,
+  and `main` branch. The existing shared-secret path remains available for
+  manual or Vercel cron calls.
 - Added publisher allowlists, redirect validation, request timeouts, response
   limits, and bounded feed imports.
 - Fixed same-fetch cross-source deduplication and model-output validation.

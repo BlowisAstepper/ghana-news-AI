@@ -8,6 +8,7 @@ export async function GET() {
   const configuration = {
     database: Boolean(process.env.DATABASE_URL),
     cronAuthentication: Boolean(process.env.CRON_SECRET),
+    githubOidcAuthentication: true,
     aiSummaries: Boolean(process.env.GEMINI_API_KEY),
   }
 
@@ -34,7 +35,10 @@ export async function GET() {
       prisma.rateLimitBucket.count(),
     ])
 
-    const degraded = !configuration.cronAuthentication || !configuration.aiSummaries
+    const degraded =
+      (!configuration.cronAuthentication &&
+        !configuration.githubOidcAuthentication) ||
+      !configuration.aiSummaries
     return NextResponse.json({
       status: degraded ? 'degraded' : 'ok',
       checkedAt: new Date().toISOString(),

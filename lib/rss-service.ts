@@ -76,6 +76,9 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
   if (successfulSources === 0) {
     throw new Error('All configured RSS sources failed')
   }
+  if (fetchedArticles.length === 0) {
+    throw new Error('Configured RSS sources returned no usable articles')
+  }
 
   // Step 2: resolve known links in one database round trip rather than one
   // lookup per article. Existing rows are refreshed with bounded concurrency;
@@ -169,6 +172,13 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
       failed++
     }
   })
+
+  // A scheduler response must not look successful when every database write
+  // failed. Partial failures remain visible in the result and logs, while an
+  // all-write failure becomes a non-2xx response that automation can alert on.
+  if (success === 0) {
+    throw new Error(`No fetched articles could be persisted (${failed} failed)`)
+  }
 
   console.log(`RSS fetch completed: ${success} articles processed, ${failed} failed, ${deleted} deleted`)
   return { success, failed, deleted }
