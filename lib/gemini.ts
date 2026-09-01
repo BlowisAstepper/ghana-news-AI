@@ -26,12 +26,17 @@ export async function createInteraction(input: string): Promise<string> {
     {
       model: GEMINI_MODEL,
       input,
-      generation_config: { thinking_level: 'minimal' },
+      generation_config: {
+        thinking_level: 'minimal',
+        max_output_tokens: 256,
+      },
       // Summaries and duplicate checks are independent, single-turn tasks;
       // retaining server-side interaction history provides no product value.
       store: false,
     },
-    { timeout: 20_000, maxRetries: 0 }
+    // Leave enough headroom inside the route's 60-second budget for optional
+    // publisher extraction, database claims, caching, and cleanup.
+    { timeout: 42_000, maxRetries: 0 }
   )
 
   return (interaction.output_text ?? '').trim()

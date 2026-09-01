@@ -7,8 +7,10 @@ import {
 } from 'jose'
 
 const GITHUB_OIDC_ISSUER = 'https://token.actions.githubusercontent.com'
-const GITHUB_OIDC_AUDIENCE =
-  'https://ghana-news-ai-wheat.vercel.app/api/rss-fetch'
+const GITHUB_OIDC_AUDIENCES = [
+  'https://ghana-news-ai-wheat.vercel.app/api/rss-fetch',
+  'https://ghnewshub.vercel.app/api/rss-fetch',
+] as const
 const GITHUB_REPOSITORY = 'BlowisAstepper/ghana-news-AI'
 const GITHUB_REPOSITORY_ID = '1176713046'
 const GITHUB_WORKFLOW_REF =
@@ -55,10 +57,17 @@ export async function isRssFetchAuthorized(
 
 export function hasTrustedGitHubActionsClaims(payload: JWTPayload): boolean {
   const audience = Array.isArray(payload.aud) ? payload.aud : [payload.aud]
+  const hasApprovedAudience = audience.some(
+    (value) =>
+      typeof value === 'string' &&
+      GITHUB_OIDC_AUDIENCES.includes(
+        value as (typeof GITHUB_OIDC_AUDIENCES)[number]
+      )
+  )
 
   return (
     payload.iss === GITHUB_OIDC_ISSUER &&
-    audience.includes(GITHUB_OIDC_AUDIENCE) &&
+    hasApprovedAudience &&
     payload.repository === GITHUB_REPOSITORY &&
     payload.repository_id === GITHUB_REPOSITORY_ID &&
     payload.ref === MAIN_REF &&
@@ -81,7 +90,7 @@ export async function verifyGitHubActionsToken(
 
     const { payload } = await jwtVerify(token, verificationKey, {
       issuer: GITHUB_OIDC_ISSUER,
-      audience: GITHUB_OIDC_AUDIENCE,
+      audience: [...GITHUB_OIDC_AUDIENCES],
       algorithms: ['RS256'],
       typ: 'JWT',
       requiredClaims: [

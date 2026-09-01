@@ -4,6 +4,7 @@ import { summarizeArticle } from '@/lib/summarize'
 import { toPublicDatabaseError } from '@/lib/database-errors'
 import { allowedDomainsForSource } from '@/lib/news-sources'
 import { fetchFullArticleContent } from '@/lib/article-extractor'
+import { toPublicAiError } from '@/lib/ai-errors'
 import {
   acquireSummaryGeneration,
   consumeSummaryRateLimit,
@@ -11,7 +12,7 @@ import {
   waitForConcurrentSummary,
 } from '@/lib/summary-protection'
 
-export const maxDuration = 30
+export const maxDuration = 60
 export const runtime = 'nodejs'
 
 const MAX_REQUEST_BYTES = 1024
@@ -134,10 +135,16 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error('Error summarizing article:', error)
-    if ((error as { status?: number })?.status === 429) {
+    const aiError = toPublicAiError(error)
+    if (aiError) {
       return NextResponse.json(
-        { error: 'The AI summary service is busy. Please try again shortly.' },
-        { status: 429, headers: { 'Retry-After': '30' } }
+        { error: aiError.message, code: aiError.code },
+        {
+          status: aiError.status,
+          headers: aiError.retryAfterSeconds
+            ? { 'Retry-After': String(aiError.retryAfterSeconds) }
+            : undefined,
+        }
       )
     }
 

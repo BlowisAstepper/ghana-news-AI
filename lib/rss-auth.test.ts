@@ -112,6 +112,15 @@ describe('trusted GitHub Actions claims', () => {
     ).toBe(true)
   })
 
+  it('accepts the new production audience during the domain transition', () => {
+    expect(
+      hasTrustedGitHubActionsClaims({
+        ...trustedClaims,
+        aud: 'https://ghnewshub.vercel.app/api/rss-fetch',
+      })
+    ).toBe(true)
+  })
+
   it.each([
     ['repository', 'someone/fork'],
     ['repository_id', '999'],
