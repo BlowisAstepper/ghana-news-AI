@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchRSSFeed, parsePublishedDate, validatePublisherUrl } from './rss-parser'
+import { fetchRSSFeed, MAX_ITEMS_PER_SOURCE, parsePublishedDate } from './rss-parser'
+import { validatePublisherUrl } from './publisher-fetch'
 
 const DOMAINS = ['myjoyonline.com']
 
@@ -52,7 +53,7 @@ describe('parsePublishedDate', () => {
 })
 
 describe('fetchRSSFeed', () => {
-  it('keeps a thin feed excerpt when full-page extraction fails', async () => {
+  it('stores feed excerpts without fetching every full publisher page', async () => {
     const xml = `<?xml version="1.0"?>
       <rss version="2.0"><channel><title>News</title>
         <item>
@@ -62,12 +63,8 @@ describe('fetchRSSFeed', () => {
           <pubDate>Sat, 29 Aug 2026 10:00:00 GMT</pubDate>
         </item>
       </channel></rss>`
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(xml, { status: 200 }))
-      .mockResolvedValueOnce(new Response('publisher unavailable', { status: 503 }))
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(xml, { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const articles = await fetchRSSFeed(
       'https://www.myjoyonline.com/feed/',
@@ -77,6 +74,27 @@ describe('fetchRSSFeed', () => {
 
     expect(articles).toHaveLength(1)
     expect(articles[0].content).toBe('Useful short excerpt.')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds each scheduled source import', async () => {
+    const items = Array.from(
+      { length: MAX_ITEMS_PER_SOURCE + 5 },
+      (_, index) => `<item>
+        <title>Headline ${index}</title>
+        <link>https://www.myjoyonline.com/story-${index}</link>
+        <description>Excerpt ${index}</description>
+      </item>`
+    ).join('')
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel><title>News</title>${items}</channel></rss>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(xml, { status: 200 })))
+
+    const articles = await fetchRSSFeed(
+      'https://www.myjoyonline.com/feed/',
+      'MyJoyOnline',
+      DOMAINS
+    )
+
+    expect(articles).toHaveLength(MAX_ITEMS_PER_SOURCE)
   })
 })

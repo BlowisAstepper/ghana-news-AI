@@ -1,30 +1,8 @@
 import { Prisma } from '@prisma/client'
 import { fetchRSSFeed, ParsedArticle } from './rss-parser'
 import { prisma } from './prisma'
-import { findDuplicatesForBatch } from './dedupe'
-
-export interface RSSSource {
-  url: string
-  source: string
-  allowedDomains: readonly string[]
-}
-
-const RSS_SOURCES: RSSSource[] = [
-  {
-    url: 'https://www.myjoyonline.com/feed/',
-    source: 'MyJoyOnline',
-    allowedDomains: ['myjoyonline.com'],
-  },
-  {
-    url: 'https://3news.com/feed.xml',
-    source: '3News',
-    allowedDomains: ['3news.com'],
-  },
-  // Graphic (graphic.com.gh) intentionally left out. Their RSS endpoint is
-  // reachable but returns a validly-formed, completely empty channel (no
-  // <item>s) — confirmed by hand, not assumed. Same failure mode that got
-  // it dropped from this project before (see FIX_PLAN.md history).
-]
+import { findDuplicatesForBatch, resolveCanonicalTarget } from './dedupe'
+import { NEWS_SOURCES } from './news-sources'
 
 export interface FetchResult {
   success: number
@@ -35,6 +13,7 @@ export interface FetchResult {
 // How long an article sticks around before it's pruned. Deliberately short
 // — this is a "what's happening now" feed, not an archive.
 const RETENTION_HOURS = 48
+const DB_WRITE_CONCURRENCY = 8
 
 export async function fetchAndStoreArticles(): Promise<FetchResult> {
   let success = 0
@@ -67,7 +46,7 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
   // Step 1: pull every source's feed, tolerating individual source failures
   // (one outlet's feed being down shouldn't sink the whole fetch).
   const sourceResults = await Promise.all(
-    RSS_SOURCES.map(async (source): Promise<ParsedArticle[]> => {
+    NEWS_SOURCES.map(async (source): Promise<ParsedArticle[]> => {
       try {
         console.log(`Fetching RSS feed from ${source.source}...`)
         const articles = await fetchRSSFeed(
@@ -85,7 +64,11 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
       }
     })
   )
-  const fetchedArticles = sourceResults.flat()
+  const fetchedByLink = new Map<string, ParsedArticle>()
+  for (const article of sourceResults.flat()) {
+    if (!fetchedByLink.has(article.link)) fetchedByLink.set(article.link, article)
+  }
+  const fetchedArticles = [...fetchedByLink.values()]
 
   // Make the scheduler fail loudly when every upstream is unavailable. The
   // GitHub workflow treats the non-2xx response as an alert instead of
@@ -94,20 +77,32 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
     throw new Error('All configured RSS sources failed')
   }
 
-  // Step 2: split into "already known" (just refresh in place) vs
-  // "genuinely new" (needs a duplicate check before it's created).
+  // Step 2: resolve known links in one database round trip rather than one
+  // lookup per article. Existing rows are refreshed with bounded concurrency;
+  // genuinely new rows continue to duplicate checking below.
+  const existingRows = fetchedArticles.length
+    ? await prisma.article.findMany({
+        where: { link: { in: fetchedArticles.map((article) => article.link) } },
+        select: { id: true, link: true },
+      })
+    : []
+  const existingByLink = new Map(existingRows.map((article) => [article.link, article.id]))
   const newArticles: ParsedArticle[] = []
+  const existingArticles: Array<{ id: string; article: ParsedArticle }> = []
 
   for (const article of fetchedArticles) {
-    try {
-      const existing = await prisma.article.findUnique({
-        where: { link: article.link },
-        select: { id: true },
-      })
+    const existingId = existingByLink.get(article.link)
+    if (existingId) {
+      existingArticles.push({ id: existingId, article })
+    } else {
+      newArticles.push(article)
+    }
+  }
 
-      if (existing) {
+  await mapWithConcurrency(existingArticles, DB_WRITE_CONCURRENCY, async ({ id, article }) => {
+    try {
         await prisma.article.update({
-          where: { id: existing.id },
+          where: { id },
           data: {
             title: article.title,
             content: article.content,
@@ -115,14 +110,11 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
           },
         })
         success++
-      } else {
-        newArticles.push(article)
-      }
     } catch (error) {
-      console.error(`Error checking/updating article from ${article.source}:`, error)
+      console.error(`Error updating article from ${article.source}:`, error)
       failed++
     }
-  }
+  })
 
   // Step 3: batched duplicate checking covering every genuinely new article
   // from every source this cycle. Normal fetches fit in one Gemini call;
@@ -133,32 +125,50 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
     newArticles.map((article) => ({ title: article.title, source: article.source }))
   )
 
-  // Step 4: create each new article in order. Keeping the canonical id for
-  // every successful insert lets a same-fetch N -> N match resolve to a real
-  // database id, including chains such as N3 -> N2 -> N1.
-  const canonicalIds = new Map<number, string>()
-  for (let i = 0; i < newArticles.length; i++) {
-    const article = newArticles[i]
+  // Step 4: resolve every same-fetch chain to either an existing row or one
+  // standalone root article. Roots can then be inserted concurrently, followed
+  // by all duplicates concurrently, without N sequential database round trips.
+  const targets = newArticles.map((_, index) =>
+    resolveCanonicalTarget(index, duplicateMatches)
+  )
+  const rootIds = new Map<number, string>()
+  const rootIndexes = targets
+    .map((target, index) => ({ target, index }))
+    .filter(({ target, index }) => target.kind === 'batch-root' && target.articleIndex === index)
+    .map(({ index }) => index)
+
+  await mapWithConcurrency(rootIndexes, DB_WRITE_CONCURRENCY, async (index) => {
+    const article = newArticles[index]
     try {
-      const duplicateMatch = duplicateMatches.get(i)
-      let mergedIntoId: string | null = null
-
-      if (duplicateMatch?.kind === 'existing') {
-        mergedIntoId = duplicateMatch.articleId
-      } else if (duplicateMatch?.kind === 'batch') {
-        // If storing the earlier article failed, keeping this one canonical
-        // is safer than pointing at a missing row or dropping it as well.
-        mergedIntoId = canonicalIds.get(duplicateMatch.articleIndex) ?? null
-      }
-
-      const canonicalId = await createArticle(article, mergedIntoId)
-      canonicalIds.set(i, canonicalId)
+      const canonicalId = await createArticle(article, null)
+      rootIds.set(index, canonicalId)
       success++
     } catch (error) {
-      console.error(`Error storing article from ${article.source}:`, error)
+      console.error(`Error storing canonical article from ${article.source}:`, error)
       failed++
     }
-  }
+  })
+
+  const duplicateIndexes = newArticles
+    .map((_, index) => index)
+    .filter((index) => !rootIndexes.includes(index))
+
+  await mapWithConcurrency(duplicateIndexes, DB_WRITE_CONCURRENCY, async (index) => {
+    const article = newArticles[index]
+    const target = targets[index]
+    const mergedIntoId =
+      target.kind === 'existing'
+        ? target.articleId
+        : rootIds.get(target.articleIndex) ?? null
+
+    try {
+      await createArticle(article, mergedIntoId)
+      success++
+    } catch (error) {
+      console.error(`Error storing duplicate article from ${article.source}:`, error)
+      failed++
+    }
+  })
 
   console.log(`RSS fetch completed: ${success} articles processed, ${failed} failed, ${deleted} deleted`)
   return { success, failed, deleted }
@@ -211,4 +221,22 @@ async function createArticle(article: ParsedArticle, mergedIntoId: string | null
     }
     throw error
   }
+}
+
+async function mapWithConcurrency<T>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, concurrency), items.length)
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex++
+        await mapper(items[index])
+      }
+    })
+  )
 }

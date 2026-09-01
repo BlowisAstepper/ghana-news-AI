@@ -10,6 +10,10 @@ export type DuplicateMatch =
   | { kind: 'existing'; articleId: string }
   | { kind: 'batch'; articleIndex: number }
 
+export type CanonicalTarget =
+  | { kind: 'existing'; articleId: string }
+  | { kind: 'batch-root'; articleIndex: number }
+
 // How many existing canonical stories get offered as match candidates, and
 // how many brand-new articles get checked in one prompt. These are prompt-size
 // caps, not ingestion caps: batches larger than MAX_NEW_PER_PROMPT are split
@@ -22,6 +26,7 @@ const MAX_NEW_PER_PROMPT = 60
 // from producing an unbounded prompt, while comfortably covering normal RSS
 // feed sizes.
 const MAX_EARLIER_NEW_CANDIDATES = 150
+const DEDUPE_CALL_TIMEOUT_MS = 3_500
 
 function isSameSource(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase()
@@ -113,7 +118,11 @@ export async function findDuplicatesForBatch(
       'E-label, earlier N-label, or none>". Examples: "N4: E12", "N5: N2", "N6: none". No other text.'
 
     try {
-      const responseText = await createInteraction(prompt)
+      const responseText = await withTimeout(
+        createInteraction(prompt),
+        DEDUPE_CALL_TIMEOUT_MS,
+        'Duplicate-check timed out'
+      )
       const lines = responseText.split('\n').map((line) => line.trim()).filter(Boolean)
 
       for (const line of lines) {
@@ -161,4 +170,37 @@ export async function findDuplicatesForBatch(
   }
 
   return matches
+}
+
+export function resolveCanonicalTarget(
+  articleIndex: number,
+  matches: Map<number, DuplicateMatch>
+): CanonicalTarget {
+  const seen = new Set<number>()
+  let currentIndex = articleIndex
+
+  while (!seen.has(currentIndex)) {
+    seen.add(currentIndex)
+    const match = matches.get(currentIndex)
+    if (!match) return { kind: 'batch-root', articleIndex: currentIndex }
+    if (match.kind === 'existing') return match
+    currentIndex = match.articleIndex
+  }
+
+  // Model-output validation should already make cycles impossible. Keeping a
+  // fail-open guard here prevents a malformed map from blocking ingestion.
+  return { kind: 'batch-root', articleIndex }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }

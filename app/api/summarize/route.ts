@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { summarizeArticle } from '@/lib/summarize'
 import { toPublicDatabaseError } from '@/lib/database-errors'
+import { allowedDomainsForSource } from '@/lib/news-sources'
+import { fetchFullArticleContent } from '@/lib/article-extractor'
 import {
   acquireSummaryGeneration,
   consumeSummaryRateLimit,
@@ -12,6 +14,7 @@ import {
 export const maxDuration = 30
 
 const MAX_REQUEST_BYTES = 1024
+const MIN_CONTENT_FOR_SUMMARY = 800
 
 export async function POST(request: NextRequest) {
   const declaredLength = Number(request.headers.get('content-length'))
@@ -43,7 +46,14 @@ export async function POST(request: NextRequest) {
 
     const article = await prisma.article.findUnique({
       where: { id },
-      select: { id: true, title: true, content: true, summary: true },
+      select: {
+        id: true,
+        title: true,
+        link: true,
+        content: true,
+        source: true,
+        summary: true,
+      },
     })
     if (!article) {
       return NextResponse.json({ error: 'Article not found' }, { status: 404 })
@@ -81,7 +91,22 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      const summary = await summarizeArticle(article.title, article.content)
+      let summaryContent = article.content
+      if (summaryContent.length < MIN_CONTENT_FOR_SUMMARY) {
+        const allowedDomains = allowedDomainsForSource(article.source)
+        if (allowedDomains) {
+          try {
+            const fullContent = await fetchFullArticleContent(article.link, allowedDomains)
+            if (fullContent.length > summaryContent.length) summaryContent = fullContent
+          } catch (extractionError) {
+            // RSS excerpts are still useful enough for a best-effort summary;
+            // publisher extraction failure should not make the feature fail.
+            console.warn(`Full article extraction failed for ${article.link}:`, extractionError)
+          }
+        }
+      }
+
+      const summary = await summarizeArticle(article.title, summaryContent)
 
       if (!summary) {
         return NextResponse.json({ error: 'Summary came back empty' }, { status: 502 })
@@ -90,7 +115,10 @@ export async function POST(request: NextRequest) {
       await prisma.$transaction([
         prisma.article.update({
           where: { id: article.id },
-          data: { summary },
+          data: {
+            summary,
+            ...(summaryContent !== article.content ? { content: summaryContent } : {}),
+          },
         }),
         prisma.summaryGeneration.deleteMany({ where: { articleId: article.id } }),
       ])

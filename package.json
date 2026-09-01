@@ -13,6 +13,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:feeds": "vite-node scripts/check-feeds.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

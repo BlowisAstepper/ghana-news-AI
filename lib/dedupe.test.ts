@@ -13,7 +13,7 @@ vi.mock('./gemini', () => ({
   createInteraction: mocks.createInteraction,
 }))
 
-import { findDuplicatesForBatch } from './dedupe'
+import { findDuplicatesForBatch, resolveCanonicalTarget } from './dedupe'
 
 describe('findDuplicatesForBatch', () => {
   beforeEach(() => {
@@ -77,5 +77,31 @@ describe('findDuplicatesForBatch', () => {
         { title: 'A story remains visible', source: 'MyJoyOnline' },
       ])
     ).resolves.toEqual(new Map())
+  })
+})
+
+describe('resolveCanonicalTarget', () => {
+  it('resolves same-fetch chains to their standalone root', () => {
+    const matches = new Map([
+      [2, { kind: 'batch' as const, articleIndex: 1 }],
+      [1, { kind: 'batch' as const, articleIndex: 0 }],
+    ])
+
+    expect(resolveCanonicalTarget(2, matches)).toEqual({
+      kind: 'batch-root',
+      articleIndex: 0,
+    })
+  })
+
+  it('resolves same-fetch chains to an existing database article', () => {
+    const matches = new Map([
+      [2, { kind: 'batch' as const, articleIndex: 1 }],
+      [1, { kind: 'existing' as const, articleId: 'existing-1' }],
+    ])
+
+    expect(resolveCanonicalTarget(2, matches)).toEqual({
+      kind: 'existing',
+      articleId: 'existing-1',
+    })
   })
 })

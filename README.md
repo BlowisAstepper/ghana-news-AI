@@ -10,7 +10,7 @@ summaries while always linking readers to the original publishers.
 ```text
 GitHub schedule (every 15 minutes)
   -> authenticated /api/rss-fetch
-  -> allowlisted RSS/article fetches
+  -> bounded, allowlisted RSS feed fetches
   -> clean text + cross-source deduplication
   -> PostgreSQL via Prisma
   -> list/search APIs
@@ -18,8 +18,8 @@ GitHub schedule (every 15 minutes)
 ```
 
 - **Sources:** MyJoyOnline and 3News. Each source has an explicit domain
-  allowlist. Feed and article requests have timeouts, redirect limits, response
-  size limits, and bounded concurrency.
+  allowlist. Feed requests have timeouts, redirect limits, response-size limits,
+  and a 20-item import cap per poll so the job fits a short serverless runtime.
 - **Storage:** Article links are unique. Existing links are refreshed safely;
   newly fetched articles are retained for 48 hours.
 - **Duplicate stories:** Gemini compares new headlines with recent canonical
@@ -27,9 +27,11 @@ GitHub schedule (every 15 minutes)
   matches are accepted. Failures leave both stories visible rather than risking
   an incorrect merge.
 - **Summaries:** Opening a headline generates a 3–4 sentence paraphrase and
-  caches it on the article. Database-backed claims stop separate Vercel
-  instances from generating the same summary concurrently. Database-backed
-  global/client limits protect Gemini quota.
+  caches it on the article. If the RSS excerpt is thin, that one publisher page
+  is safely extracted on demand rather than scraping every page during cron.
+  Database-backed claims stop separate Vercel instances from generating the
+  same summary concurrently. Database-backed global/client limits protect
+  Gemini quota.
 - **Scheduling:** Public article traffic never starts ingestion. Only the
   secret-protected RSS endpoint can refresh the database.
 
@@ -87,6 +89,7 @@ curl -X POST http://localhost:3000/api/rss-fetch \
 ```bash
 npm run lint
 npm test
+npm run check:feeds
 npx tsc --noEmit --incremental false
 npm run build
 ```
