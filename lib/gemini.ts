@@ -13,12 +13,13 @@ function getGeminiClient(): GoogleGenAI {
   return gemini
 }
 
-// Use the stable Flash-Lite model for short summaries and headline matching:
-// these are small, latency-sensitive tasks that do not need a heavier model.
+// Use the stable Flash model for short summaries and headline matching. It is
+// consistently available to the production API key; minimal thinking keeps
+// these simple tasks within the serverless request budget.
 // The older `models.generateContent` call is legacy; Google recommends the
 // Interactions API for new integrations. See:
 // https://ai.google.dev/gemini-api/docs/migrate-to-interactions
-export const GEMINI_MODEL = 'gemini-3.5-flash-lite'
+export const GEMINI_MODEL = 'gemini-3.6-flash'
 
 export async function createInteraction(input: string): Promise<string> {
   const interaction = await getGeminiClient().interactions.create(
@@ -30,7 +31,7 @@ export async function createInteraction(input: string): Promise<string> {
       // retaining server-side interaction history provides no product value.
       store: false,
     },
-    { timeout: 12_000, maxRetries: 0 }
+    { timeout: 20_000, maxRetries: 0 }
   )
 
   return (interaction.output_text ?? '').trim()
