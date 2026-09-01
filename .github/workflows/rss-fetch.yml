@@ -14,8 +14,8 @@ permissions:
   id-token: write
 
 env:
-  APP_URL: https://ghana-news-ai-wheat.vercel.app
-  OIDC_AUDIENCE: https://ghana-news-ai-wheat.vercel.app/api/rss-fetch
+  APP_URL: https://ghnewshub.vercel.app
+  OIDC_AUDIENCE: https://ghnewshub.vercel.app/api/rss-fetch
 
 concurrency:
   group: production-rss-refresh
