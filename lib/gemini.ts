@@ -4,7 +4,14 @@ import { GoogleGenAI } from '@google/genai'
 // and cross-source duplicate-story matching.
 // GEMINI_API_KEY comes from https://aistudio.google.com/apikey, no billing
 // required for the free tier.
-export const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+let gemini: GoogleGenAI | undefined
+
+function getGeminiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured')
+  gemini ??= new GoogleGenAI({ apiKey })
+  return gemini
+}
 
 // gemini-2.5-flash and the older `models.generateContent` call are retired
 // for new API keys — Google moved to the Interactions API. See:
@@ -18,7 +25,13 @@ export const GEMINI_MODEL = 'gemini-3.6-flash'
 // directly: one retry after a short wait clears the vast majority of them.
 export async function createInteraction(input: string): Promise<string> {
   const attempt = async () => {
-    const interaction = await gemini.interactions.create({ model: GEMINI_MODEL, input })
+    const interaction = await getGeminiClient().interactions.create({
+      model: GEMINI_MODEL,
+      input,
+      // Summaries and duplicate checks are independent, single-turn tasks;
+      // retaining server-side interaction history provides no product value.
+      store: false,
+    })
     return (interaction.output_text ?? '').trim()
   }
 

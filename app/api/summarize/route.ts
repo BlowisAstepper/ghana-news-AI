@@ -12,6 +12,7 @@ import {
 } from '@/lib/summary-protection'
 
 export const maxDuration = 30
+export const runtime = 'nodejs'
 
 const MAX_REQUEST_BYTES = 1024
 const MIN_CONTENT_FOR_SUMMARY = 800
