@@ -5,7 +5,15 @@ import { createInteraction } from './gemini'
 // limits even on the rare very-long article.
 const MAX_CONTENT_CHARS = 6000
 
-export async function summarizeArticle(title: string, content: string): Promise<string> {
+interface SummarizeOptions {
+  timeoutMs?: number
+}
+
+export async function summarizeArticle(
+  title: string,
+  content: string,
+  options: SummarizeOptions = {}
+): Promise<string> {
   const truncated =
     content.length > MAX_CONTENT_CHARS ? content.slice(0, MAX_CONTENT_CHARS) + '...' : content
 
@@ -22,5 +30,5 @@ export async function summarizeArticle(title: string, content: string): Promise<
     "or preamble — output only the summary text.\n\n" +
     `UNTRUSTED_SOURCE_JSON:\n${sourceMaterial}`
 
-  return createInteraction(prompt)
+  return createInteraction(prompt, { timeoutMs: options.timeoutMs })
 }

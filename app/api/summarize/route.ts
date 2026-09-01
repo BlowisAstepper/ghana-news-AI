@@ -17,6 +17,8 @@ export const runtime = 'nodejs'
 
 const MAX_REQUEST_BYTES = 1024
 const MIN_CONTENT_FOR_SUMMARY = 800
+const EXPANDED_CONTENT_TIMEOUT_MS = 18_000
+const EXCERPT_FALLBACK_TIMEOUT_MS = 20_000
 
 export async function POST(request: NextRequest) {
   const declaredLength = Number(request.headers.get('content-length'))
@@ -108,7 +110,35 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const summary = await summarizeArticle(article.title, summaryContent)
+      let summary: string
+      try {
+        summary = await summarizeArticle(article.title, summaryContent, {
+          timeoutMs:
+            summaryContent !== article.content
+              ? EXPANDED_CONTENT_TIMEOUT_MS
+              : undefined,
+        })
+      } catch (summaryError) {
+        const publicAiError = toPublicAiError(summaryError)
+        const canRetryWithExcerpt =
+          summaryContent !== article.content &&
+          (publicAiError?.code === 'AI_TIMEOUT' ||
+            publicAiError?.code === 'AI_UPSTREAM_ERROR')
+
+        if (!canRetryWithExcerpt) throw summaryError
+
+        // Some publisher pages contain enough unrelated layout text to make
+        // an otherwise simple model request stall. The clean RSS excerpt is
+        // less detailed but remains grounded source material and is a much
+        // better fallback than failing the article entirely.
+        console.warn(
+          `Expanded summary input failed for ${article.link}; retrying with RSS excerpt`
+        )
+        summaryContent = article.content
+        summary = await summarizeArticle(article.title, article.content, {
+          timeoutMs: EXCERPT_FALLBACK_TIMEOUT_MS,
+        })
+      }
 
       if (!summary) {
         return NextResponse.json({ error: 'Summary came back empty' }, { status: 502 })

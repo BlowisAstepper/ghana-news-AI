@@ -21,7 +21,14 @@ function getGeminiClient(): GoogleGenAI {
 // https://ai.google.dev/gemini-api/docs/migrate-to-interactions
 export const GEMINI_MODEL = 'gemini-3.6-flash'
 
-export async function createInteraction(input: string): Promise<string> {
+interface InteractionOptions {
+  timeoutMs?: number
+}
+
+export async function createInteraction(
+  input: string,
+  options: InteractionOptions = {}
+): Promise<string> {
   const interaction = await getGeminiClient().interactions.create(
     {
       model: GEMINI_MODEL,
@@ -36,7 +43,7 @@ export async function createInteraction(input: string): Promise<string> {
     },
     // Leave enough headroom inside the route's 60-second budget for optional
     // publisher extraction, database claims, caching, and cleanup.
-    { timeout: 42_000, maxRetries: 0 }
+    { timeout: options.timeoutMs ?? 42_000, maxRetries: 0 }
   )
 
   return (interaction.output_text ?? '').trim()
