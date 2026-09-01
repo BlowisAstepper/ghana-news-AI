@@ -1,0 +1,13 @@
+# Never upload local credentials or Vercel authentication state.
+.env*
+!.env.example
+.vercel
+
+# Local build and dependency artifacts are recreated by Vercel.
+.next
+node_modules
+coverage
+*.tsbuildinfo
+
+# Git metadata is not needed in deployment source.
+.git
