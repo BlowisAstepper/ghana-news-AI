@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import ArticleCard from './ArticleCard'
 import ArticleCardSkeleton from './ArticleCardSkeleton'
 import SummaryModal from './SummaryModal'
@@ -10,17 +10,31 @@ interface ArticleListProps {
   searchQuery?: string
   searchSource?: string
   refreshKey?: number
+  onLoadingChange?: (loading: boolean) => void
 }
 
-export default function ArticleList({ searchQuery = '', searchSource = '', refreshKey = 0 }: ArticleListProps) {
+export default function ArticleList({
+  searchQuery = '',
+  searchSource = '',
+  refreshKey = 0,
+  onLoadingChange,
+}: ArticleListProps) {
   const [articles, setArticles] = useState<Article[]>([])
   const [pagination, setPagination] = useState<PaginationInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null)
+  const latestRequestRef = useRef(0)
+  const activeControllerRef = useRef<AbortController | null>(null)
 
   const fetchArticles = useCallback(async (page = 1) => {
+    activeControllerRef.current?.abort()
+    const controller = new AbortController()
+    const requestId = ++latestRequestRef.current
+    activeControllerRef.current = controller
+
     setLoading(true)
+    onLoadingChange?.(true)
     setError(null)
 
     try {
@@ -39,21 +53,41 @@ export default function ArticleList({ searchQuery = '', searchSource = '', refre
         endpoint = `/api/articles?${params}`
       }
 
-      const response = await fetch(endpoint)
-      if (!response.ok) throw new Error('Failed to fetch articles')
+      const response = await fetch(endpoint, { signal: controller.signal })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        const message =
+          data && typeof data.error === 'string'
+            ? data.error
+            : 'Failed to fetch articles'
+        throw new Error(message)
+      }
+      if (!data || !Array.isArray(data.articles) || !data.pagination) {
+        throw new Error('The news service returned an invalid response')
+      }
 
-      const data = await response.json()
+      if (requestId !== latestRequestRef.current) return
       setArticles(data.articles)
       setPagination(data.pagination)
     } catch (err) {
+      if (controller.signal.aborted || requestId !== latestRequestRef.current) return
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestRef.current) {
+        activeControllerRef.current = null
+        setLoading(false)
+        onLoadingChange?.(false)
+      }
     }
-  }, [searchQuery, searchSource])
+  }, [onLoadingChange, searchQuery, searchSource])
 
   useEffect(() => {
-    fetchArticles(1)
+    void fetchArticles(1)
+
+    return () => {
+      activeControllerRef.current?.abort()
+      latestRequestRef.current += 1
+    }
   }, [fetchArticles, refreshKey])
 
   if (loading && articles.length === 0) {
@@ -88,6 +122,15 @@ export default function ArticleList({ searchQuery = '', searchSource = '', refre
 
   return (
     <div className="space-y-6">
+      {error && articles.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+        >
+          {error}. Previously loaded articles are shown below.
+        </div>
+      )}
+
       {articles.length === 0 ? (
         <div className="text-center py-16">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 mb-4">
@@ -117,6 +160,7 @@ export default function ArticleList({ searchQuery = '', searchSource = '', refre
               <button
                 onClick={() => fetchArticles(pagination.page - 1)}
                 disabled={pagination.page <= 1 || loading}
+                aria-label="Go to previous page"
                 className="p-2.5 rounded-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-red-200 dark:hover:border-red-900/60 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 dark:disabled:hover:border-gray-800 text-gray-600 dark:text-gray-300 transition-colors duration-200"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -131,6 +175,7 @@ export default function ArticleList({ searchQuery = '', searchSource = '', refre
               <button
                 onClick={() => fetchArticles(pagination.page + 1)}
                 disabled={pagination.page >= pagination.pages || loading}
+                aria-label="Go to next page"
                 className="p-2.5 rounded-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-red-200 dark:hover:border-red-900/60 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 dark:disabled:hover:border-gray-800 text-gray-600 dark:text-gray-300 transition-colors duration-200"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,7 +188,11 @@ export default function ArticleList({ searchQuery = '', searchSource = '', refre
       )}
 
       {selectedArticle && (
-        <SummaryModal article={selectedArticle} onClose={() => setSelectedArticle(null)} />
+        <SummaryModal
+          key={selectedArticle.id}
+          article={selectedArticle}
+          onClose={() => setSelectedArticle(null)}
+        />
       )}
     </div>
   )

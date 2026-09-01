@@ -1,20 +1,25 @@
-import { NextRequest, NextResponse, after } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { refreshIfStale } from '@/lib/rss-service'
 import { truncateForApi } from '@/lib/format'
-
-// The after() background refresh below can trigger a full RSS fetch (two
-// feeds + a Neon cold-start + a Gemini dedup call), which needs more room
-// than Vercel's default timeout gives a function.
-export const maxDuration = 60
+import { parsePagination, parseSource } from '@/lib/api-params'
+import { toPublicDatabaseError } from '@/lib/database-errors'
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '12')
-    const source = searchParams.get('source')
+    const pagination = parsePagination(searchParams)
+    if (!pagination.ok) {
+      return NextResponse.json({ error: pagination.error }, { status: 400 })
+    }
+
+    const sourceResult = parseSource(searchParams.get('source'))
+    if (!sourceResult.ok) {
+      return NextResponse.json({ error: sourceResult.error }, { status: 400 })
+    }
+
+    const { page, limit } = pagination.value
+    const source = sourceResult.value
 
     const skip = (page - 1) * limit
     // mergedIntoId: null excludes articles that got folded into another
@@ -43,11 +48,6 @@ export async function GET(request: NextRequest) {
       content: truncateForApi(article.content),
     }))
 
-    // Fires after the response is already on its way to the browser, so a
-    // stale/empty DB never makes a visitor wait on a live RSS fetch — this
-    // request still serves whatever's on hand, and the *next* one benefits.
-    after(() => refreshIfStale().catch((err) => console.error('Background refresh failed:', err)))
-
     return NextResponse.json({
       articles,
       pagination: {
@@ -59,9 +59,10 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('Error fetching articles:', error)
+    const publicError = toPublicDatabaseError(error)
     return NextResponse.json(
-      { error: 'Failed to fetch articles' },
-      { status: 500 }
+      { error: publicError.message, code: publicError.code },
+      { status: publicError.status }
     )
   }
 }

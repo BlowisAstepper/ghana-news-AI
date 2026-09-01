@@ -28,11 +28,35 @@ model Article {
   // stories show up; the canonical article's `duplicates` relation is used
   // to show "also reported by" links. onDelete: Cascade means a duplicate
   // never outlives the canonical story it was folded into.
-  mergedIntoId String?
-  mergedInto   Article?  @relation("ArticleDuplicates", fields: [mergedIntoId], references: [id], onDelete: Cascade)
-  duplicates   Article[] @relation("ArticleDuplicates")
+  mergedIntoId      String?
+  mergedInto        Article?           @relation("ArticleDuplicates", fields: [mergedIntoId], references: [id], onDelete: Cascade)
+  duplicates        Article[]          @relation("ArticleDuplicates")
+  summaryGeneration SummaryGeneration?
 
   @@index([source])
   @@index([publishedAt])
   @@index([mergedIntoId])
+}
+
+// A short-lived, database-backed claim that prevents two serverless
+// instances from generating the same article summary at the same time.
+// Keeping this in Postgres (rather than process memory) makes it work across
+// Vercel instances and regions. Stale claims are reclaimed by the API.
+model SummaryGeneration {
+  articleId String   @id
+  startedAt DateTime @default(now())
+  article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([startedAt])
+}
+
+// Fixed-window counters used to protect the public, quota-consuming summary
+// endpoint. Bucket IDs contain only a scope, a one-way client hash, and the
+// window timestamp; raw IP addresses are never stored.
+model RateLimitBucket {
+  id        String   @id
+  count     Int      @default(1)
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }

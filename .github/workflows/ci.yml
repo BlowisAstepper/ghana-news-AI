@@ -8,19 +8,22 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # No live database is needed for generation/type-checking/building, but
+      # defining the URL keeps Prisma's install-time generation deterministic.
+      DATABASE_URL: 'postgresql://user:password@localhost:5432/ci'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: '.nvmrc'
           cache: npm
 
       - run: npm ci
-      - run: npx prisma generate
       - run: npm run lint
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
-        env:
-          # A real Postgres URL isn't needed to type-check/build, but Prisma's
-          # generated client expects the var to be present.
-          DATABASE_URL: 'postgresql://user:password@localhost:5432/ci'

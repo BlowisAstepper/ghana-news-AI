@@ -6,11 +6,20 @@ import { findDuplicatesForBatch } from './dedupe'
 export interface RSSSource {
   url: string
   source: string
+  allowedDomains: readonly string[]
 }
 
 const RSS_SOURCES: RSSSource[] = [
-  { url: 'https://www.myjoyonline.com/feed/', source: 'MyJoyOnline' },
-  { url: 'https://3news.com/feed.xml', source: '3News' },
+  {
+    url: 'https://www.myjoyonline.com/feed/',
+    source: 'MyJoyOnline',
+    allowedDomains: ['myjoyonline.com'],
+  },
+  {
+    url: 'https://3news.com/feed.xml',
+    source: '3News',
+    allowedDomains: ['3news.com'],
+  },
   // Graphic (graphic.com.gh) intentionally left out. Their RSS endpoint is
   // reachable but returns a validly-formed, completely empty channel (no
   // <item>s) — confirmed by hand, not assumed. Same failure mode that got
@@ -31,6 +40,7 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
   let success = 0
   let failed = 0
   let deleted = 0
+  let successfulSources = 0
 
   // Delete articles older than the retention window. Falls back to
   // createdAt for the rare article whose feed omitted a publish date — SQL's
@@ -56,17 +66,32 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
 
   // Step 1: pull every source's feed, tolerating individual source failures
   // (one outlet's feed being down shouldn't sink the whole fetch).
-  const fetchedArticles: ParsedArticle[] = []
-  for (const source of RSS_SOURCES) {
-    try {
-      console.log(`Fetching RSS feed from ${source.source}...`)
-      const articles = await fetchRSSFeed(source.url, source.source)
-      fetchedArticles.push(...articles)
-      console.log(`Completed fetching from ${source.source}: ${articles.length} articles found`)
-    } catch (error) {
-      console.error(`Error fetching from ${source.source}:`, error)
-      failed++
-    }
+  const sourceResults = await Promise.all(
+    RSS_SOURCES.map(async (source): Promise<ParsedArticle[]> => {
+      try {
+        console.log(`Fetching RSS feed from ${source.source}...`)
+        const articles = await fetchRSSFeed(
+          source.url,
+          source.source,
+          source.allowedDomains
+        )
+        successfulSources++
+        console.log(`Completed fetching from ${source.source}: ${articles.length} articles found`)
+        return articles
+      } catch (error) {
+        console.error(`Error fetching from ${source.source}:`, error)
+        failed++
+        return []
+      }
+    })
+  )
+  const fetchedArticles = sourceResults.flat()
+
+  // Make the scheduler fail loudly when every upstream is unavailable. The
+  // GitHub workflow treats the non-2xx response as an alert instead of
+  // recording a misleadingly successful refresh.
+  if (successfulSources === 0) {
+    throw new Error('All configured RSS sources failed')
   }
 
   // Step 2: split into "already known" (just refresh in place) vs
@@ -99,20 +124,35 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
     }
   }
 
-  // Step 3: one batched duplicate check covering every genuinely new
-  // article from every source this cycle — see lib/dedupe.ts for why this
-  // has to be a single call rather than one per article (free-tier rate
-  // limit is 20 requests/minute; a dozen new articles at once would blow
-  // through that instantly at one call each).
+  // Step 3: batched duplicate checking covering every genuinely new article
+  // from every source this cycle. Normal fetches fit in one Gemini call;
+  // unusually large imports are chunked rather than silently leaving every
+  // article after the prompt-size cap unchecked. Matches may point to an
+  // existing canonical row or to an earlier article in this same fetch.
   const duplicateMatches = await findDuplicatesForBatch(
     newArticles.map((article) => ({ title: article.title, source: article.source }))
   )
 
-  // Step 4: create each new article, merged into its match if one was found.
+  // Step 4: create each new article in order. Keeping the canonical id for
+  // every successful insert lets a same-fetch N -> N match resolve to a real
+  // database id, including chains such as N3 -> N2 -> N1.
+  const canonicalIds = new Map<number, string>()
   for (let i = 0; i < newArticles.length; i++) {
     const article = newArticles[i]
     try {
-      await createArticle(article, duplicateMatches.get(i) ?? null)
+      const duplicateMatch = duplicateMatches.get(i)
+      let mergedIntoId: string | null = null
+
+      if (duplicateMatch?.kind === 'existing') {
+        mergedIntoId = duplicateMatch.articleId
+      } else if (duplicateMatch?.kind === 'batch') {
+        // If storing the earlier article failed, keeping this one canonical
+        // is safer than pointing at a missing row or dropping it as well.
+        mergedIntoId = canonicalIds.get(duplicateMatch.articleIndex) ?? null
+      }
+
+      const canonicalId = await createArticle(article, mergedIntoId)
+      canonicalIds.set(i, canonicalId)
       success++
     } catch (error) {
       console.error(`Error storing article from ${article.source}:`, error)
@@ -120,13 +160,13 @@ export async function fetchAndStoreArticles(): Promise<FetchResult> {
     }
   }
 
-  console.log(`RSS fetch completed: ${success} new articles, ${failed} failed, ${deleted} deleted`)
+  console.log(`RSS fetch completed: ${success} articles processed, ${failed} failed, ${deleted} deleted`)
   return { success, failed, deleted }
 }
 
-async function createArticle(article: ParsedArticle, mergedIntoId: string | null) {
+async function createArticle(article: ParsedArticle, mergedIntoId: string | null): Promise<string> {
   try {
-    await prisma.article.create({
+    const created = await prisma.article.create({
       data: {
         title: article.title,
         link: article.link,
@@ -135,60 +175,40 @@ async function createArticle(article: ParsedArticle, mergedIntoId: string | null
         publishedAt: article.publishedAt,
         mergedIntoId: mergedIntoId ?? undefined,
       },
+      select: { id: true, mergedIntoId: true },
     })
+    return created.mergedIntoId ?? created.id
   } catch (error) {
     // Lost a race with a concurrent fetch that inserted this exact link
-    // first (e.g. the cron and a visitor-triggered refresh overlapping) —
+    // first (for example, two cron invocations overlapping) —
     // fall back to an update. Same race-safety property the plain upsert
     // this replaced used to provide (see FIX_PLAN.md), just done by hand
     // since create-with-dedup-lookup can't be expressed as a single upsert.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      await prisma.article.update({
+      const existing = await prisma.article.update({
         where: { link: article.link },
         data: {
           title: article.title,
           content: article.content,
           publishedAt: article.publishedAt,
         },
+        select: { id: true, mergedIntoId: true },
       })
-      return
+      return existing.mergedIntoId ?? existing.id
+    }
+
+    // A concurrent retention run can remove an existing canonical candidate
+    // between duplicate detection and insert. In that case, retain the news
+    // article as a standalone story instead of failing ingestion because its
+    // now-stale foreign key disappeared.
+    if (
+      mergedIntoId &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2003'
+    ) {
+      console.warn(`Duplicate target ${mergedIntoId} disappeared; storing ${article.link} standalone`)
+      return createArticle(article, null)
     }
     throw error
   }
-}
-
-// How long a fetch is considered "fresh enough" before a page load will
-// trigger another one. Matches the external cron cadence (see
-// .github/workflows/rss-fetch.yml) — this is a fallback for visits that
-// land between scheduled runs, or for when the cron isn't wired up yet.
-const STALE_MS = 15 * 60 * 1000
-
-// Guards against a burst of concurrent requests (e.g. the homepage firing
-// off /api/articles while a search is also in flight) each kicking off
-// their own fetch. Only meaningful within a single warm server instance —
-// on serverless that's fine, since fetchAndStoreArticles() handles
-// concurrent inserts of the same link safely anyway, so an overlapping run
-// from another instance is harmless.
-let refreshInFlight: Promise<FetchResult> | null = null
-
-export async function refreshIfStale(): Promise<void> {
-  if (refreshInFlight) {
-    await refreshInFlight
-    return
-  }
-
-  const latest = await prisma.article.findFirst({
-    orderBy: { publishedAt: 'desc' },
-    select: { publishedAt: true },
-  })
-
-  const isStale =
-    !latest?.publishedAt || Date.now() - latest.publishedAt.getTime() > STALE_MS
-
-  if (!isStale) return
-
-  refreshInFlight = fetchAndStoreArticles().finally(() => {
-    refreshInFlight = null
-  })
-  await refreshInFlight
 }

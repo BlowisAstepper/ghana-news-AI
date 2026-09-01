@@ -1,24 +1,29 @@
-# Fix Plan
+# Production repair record
 
-## Issues Fixed:
-1. [x] Race condition in rss-service.ts - now uses upsert instead of findUnique + create
-2. [x] Added publishedAt field to capture publication date from RSS
-3. [x] Added index on source field in Prisma schema for query performance
-4. [x] Added automatic cleanup of articles older than 24 hours
-5. [x] Removed Graphic source (only MyJoyOnline remains)
-6. [x] Updated all UI references to reflect single source
-7. [x] Changed scheduler interval from 1 hour to 15 minutes
+## Root cause addressed
 
-## Files Edited:
-1. [x] prisma/schema.prisma - Added publishedAt + index
-2. [x] lib/rss-parser.ts - Captures pubDate
-3. [x] lib/rss-service.ts - Uses upsert, handles publishedAt, deletes old articles
-4. [x] lib/scheduler.ts - Updated interval to 15 minutes
-5. [x] app/layout.tsx - Updated metadata
-6. [x] components/SearchBar.tsx - Removed Graphic option
-7. [x] app/page.tsx - Updated all references
+The deployed article API used `summary`, `mergedIntoId`, and duplicate-relation
+fields introduced by later Prisma migrations, while Vercel only generated the
+Prisma Client and never deployed those migrations. An older production schema
+therefore returned a server error as soon as `/api/articles` queried it.
 
-## Database:
-- [x] Deleted all Graphic articles from database
-- [x] Generated Prisma client
+Production Vercel builds now run `prisma migrate deploy` before `next build`.
+Preview builds explicitly skip database migrations.
 
+## Reliability and security work
+
+- Added `/api/health` and stable public database error codes.
+- Validated and capped pagination, search, and source parameters.
+- Removed traffic-triggered RSS ingestion; the authenticated scheduler is the
+  only refresh mechanism.
+- Added publisher allowlists, redirect validation, request timeouts, response
+  limits, and bounded extraction concurrency.
+- Fixed same-fetch cross-source deduplication and model-output validation.
+- Added distributed summary-generation claims and global/client rate limits.
+- Hardened AI prompts against instructions embedded in source material.
+- Added frontend request cancellation, accurate refresh/loading behavior, and
+  accessible modal focus management.
+- Updated Next.js and transitive dependencies to patched versions.
+- Added Vitest regression coverage and CI test execution.
+
+See `README.md` for deployment and one-time production recovery instructions.

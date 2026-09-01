@@ -17,10 +17,10 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "Ghana News Hub",
-  description: "Stay updated with the latest news from Ghana's leading source MyJoyOnline",
+  description: "Latest Ghanaian news from MyJoyOnline and 3News, with concise AI summaries",
   openGraph: {
     title: "Ghana News Hub",
-    description: "Stay updated with the latest news from Ghana's leading source MyJoyOnline",
+    description: "Latest Ghanaian news from MyJoyOnline and 3News, with concise AI summaries",
     url: siteUrl,
     siteName: "Ghana News Hub",
     type: "website",
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Ghana News Hub",
-    description: "Stay updated with the latest news from Ghana's leading source MyJoyOnline",
+    description: "Latest Ghanaian news from MyJoyOnline and 3News, with concise AI summaries",
   },
 };
 

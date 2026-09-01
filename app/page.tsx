@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import ArticleList from '../components/ArticleList'
 import SearchBar from '../components/SearchBar'
 
@@ -9,6 +9,7 @@ export default function Home() {
   const [searchSource, setSearchSource] = useState<string | undefined>()
   const [refreshKey, setRefreshKey] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
+  const [articlesLoading, setArticlesLoading] = useState(false)
 
   const handleSearch = (query: string, source?: string) => {
     setSearchQuery(query)
@@ -18,10 +19,12 @@ export default function Home() {
   const handleRefresh = () => {
     setRefreshing(true)
     setRefreshKey((key) => key + 1)
-    // Purely cosmetic — gives the icon a moment to finish its spin instead
-    // of snapping back the instant the fetch resolves.
-    window.setTimeout(() => setRefreshing(false), 600)
   }
+
+  const handleArticlesLoadingChange = useCallback((isLoading: boolean) => {
+    setArticlesLoading(isLoading)
+    if (!isLoading) setRefreshing(false)
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -47,7 +50,10 @@ export default function Home() {
 
             <button
               onClick={handleRefresh}
-              className="group inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 hover:border-red-200 dark:hover:border-red-900/60 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-950 transition-colors duration-200"
+              disabled={refreshing}
+              aria-busy={refreshing}
+              aria-label={refreshing ? 'Refreshing articles' : 'Refresh articles'}
+              className="group inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 hover:border-red-200 dark:hover:border-red-900/60 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-60 disabled:cursor-wait focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-950 transition-colors duration-200"
             >
               <svg
                 className={`w-4 h-4 transition-transform duration-500 ${refreshing ? 'animate-spin' : 'group-hover:rotate-180'}`}
@@ -71,7 +77,7 @@ export default function Home() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <SearchBar onSearch={handleSearch} />
+          <SearchBar onSearch={handleSearch} loading={articlesLoading} />
         </div>
 
         <div className="space-y-6">
@@ -79,14 +85,19 @@ export default function Home() {
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
               {searchQuery ? `Results for "${searchQuery}"` : 'Latest News'}
             </h2>
-            {searchQuery && searchSource && (
+            {searchSource && (
               <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
                 Source: {searchSource}
               </span>
             )}
           </div>
 
-          <ArticleList searchQuery={searchQuery} searchSource={searchSource} refreshKey={refreshKey} />
+          <ArticleList
+            searchQuery={searchQuery}
+            searchSource={searchSource}
+            refreshKey={refreshKey}
+            onLoadingChange={handleArticlesLoadingChange}
+          />
         </div>
       </main>
 
