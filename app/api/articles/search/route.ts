@@ -1,9 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 import { truncateForApi } from '@/lib/format'
 import { parsePagination, parseSearchQuery, parseSource } from '@/lib/api-params'
 import { toPublicDatabaseError } from '@/lib/database-errors'
+import { buildSearchVariants } from '@/lib/search-query'
+
+type RankedArticle = {
+  id: string
+  relevance: number
+}
+
+type SearchCount = {
+  total: number
+}
+
+function searchDocument(articleAlias: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(
+    setweight(to_tsvector('english'::regconfig, coalesce(${articleAlias}."title", '')), 'A') ||
+    setweight(to_tsvector('english'::regconfig, coalesce(${articleAlias}."summary", '')), 'B') ||
+    setweight(to_tsvector('english'::regconfig, coalesce(${articleAlias}."content", '')), 'C') ||
+    setweight(to_tsvector('english'::regconfig, coalesce(${articleAlias}."source", '')), 'D')
+  )`
+}
+
+function searchExpression(query: string): Prisma.Sql {
+  const variants = buildSearchVariants(query)
+  return Prisma.sql`(${Prisma.join(
+    variants.map(
+      (variant) => Prisma.sql`websearch_to_tsquery('english'::regconfig, ${variant})`
+    ),
+    ' || '
+  )})`
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,43 +54,77 @@ export async function GET(request: NextRequest) {
     const { page, limit } = pagination.value
     const query = queryResult.value
     const source = sourceResult.value
-
     const skip = (page - 1) * limit
 
-    // mergedIntoId: null excludes articles folded into another source's
-    // coverage of the same story — see lib/dedupe.ts.
-    const where: Prisma.ArticleWhereInput = { mergedIntoId: null }
-
-    if (query) {
-      // Postgres's `contains` is case-sensitive unless told otherwise
-      // (unlike SQLite's default LIKE behavior, which this used to rely on).
-      where.OR = [
-        { title: { contains: query, mode: 'insensitive' } },
-        { content: { contains: query, mode: 'insensitive' } },
-      ]
+    if (!query) {
+      return NextResponse.json({
+        articles: [],
+        pagination: { page, limit, total: 0, pages: 0 },
+      })
     }
 
-    if (source) {
-      where.source = source
-    }
+    const articleAlias = Prisma.raw('a')
+    const document = searchDocument(articleAlias)
+    const tsQuery = searchExpression(query)
+    const sourceFilter = source
+      ? Prisma.sql`AND a."source" = ${source}`
+      : Prisma.empty
 
-    const [rawArticles, total] = await Promise.all([
-      prisma.article.findMany({
-        where,
-        orderBy: { publishedAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          duplicates: { select: { source: true, link: true, title: true } },
-        },
-      }),
-      prisma.article.count({ where }),
+    // PostgreSQL's English full-text configuration stems related word forms
+    // (death/deaths, tax/taxes) and matches complete lexemes, so a short query
+    // such as GRA no longer returns words that merely contain those letters.
+    // Headline matches carry the most weight, followed by cached summaries and
+    // the full publisher text. A GIN index keeps this fast as retention grows.
+    const [rankedArticles, countRows] = await Promise.all([
+      prisma.$queryRaw<RankedArticle[]>(Prisma.sql`
+        WITH matching AS (
+          SELECT
+            a."id",
+            a."publishedAt",
+            a."createdAt",
+            ts_rank_cd(${document}, ${tsQuery})::float8 AS relevance
+          FROM "Article" a
+          WHERE a."mergedIntoId" IS NULL
+            ${sourceFilter}
+            AND ${document} @@ ${tsQuery}
+        )
+        SELECT "id", relevance
+        FROM matching
+        ORDER BY relevance DESC, coalesce("publishedAt", "createdAt") DESC
+        LIMIT ${limit}
+        OFFSET ${skip}
+      `),
+      prisma.$queryRaw<SearchCount[]>(Prisma.sql`
+        SELECT count(*)::int AS total
+        FROM "Article" a
+        WHERE a."mergedIntoId" IS NULL
+          ${sourceFilter}
+          AND ${document} @@ ${tsQuery}
+      `),
     ])
+
+    const ids = rankedArticles.map((article) => article.id)
+    const rawArticles = ids.length
+      ? await prisma.article.findMany({
+          where: { id: { in: ids } },
+          include: {
+            duplicates: { select: { source: true, link: true, title: true } },
+          },
+        })
+      : []
+
+    const positionById = new Map(ids.map((id, position) => [id, position]))
+    rawArticles.sort(
+      (left, right) =>
+        (positionById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (positionById.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    )
 
     const articles = rawArticles.map((article) => ({
       ...article,
       content: truncateForApi(article.content),
     }))
+    const total = countRows[0]?.total ?? 0
 
     return NextResponse.json({
       articles,

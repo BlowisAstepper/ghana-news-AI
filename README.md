@@ -47,7 +47,7 @@ Gemini · Vitest
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/articles` | Paginated canonical stories; optional `source` |
-| `GET /api/articles/search` | Title/content search using `q`; optional `source` |
+| `GET /api/articles/search` | Ranked title/summary/content full-text search using `q`; optional `source` |
 | `POST /api/summarize` | Generate or return a cached article summary |
 | `GET/POST /api/rss-fetch` | OIDC/shared-secret protected ingestion trigger |
 | `GET /api/health` | Safe configuration, database, and migration readiness check |
